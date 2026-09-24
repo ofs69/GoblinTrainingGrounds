@@ -80,6 +80,31 @@ The `h0/` stores are derived, discardable caches of the frozen
 frontend's output (see `docs/TRAINING.md`); deleting them costs one
 rebuild pass.
 
+## Banner masks
+
+Some sources stamp a static banner — a logo, a URL, a border — onto
+every frame of a clip. A static overlay is a clip-identity fingerprint:
+the model's attention measurably settles on it, and what it learns from
+a banner is *which clip this is*, not what the motion does. That is
+memorization wearing the costume of skill, and it does not survive
+contact with a clip the model has never seen.
+
+`masks/<id>.json` marks such regions so they can be zeroed out of the
+model's **input** before the frontend sees them. Each file lists rects
+in normalized video coordinates (`x1`, `y1`, `x2`, `y2` in 0–1) with a
+`status`; rects marked `accepted` (a human's verdict) or `auto` (a
+trusted border detection nobody rejected) are honored, and a grid cell
+is masked when a rect covers at least a fifth of it.
+
+Because it is an input transform, not a loss trick, it must follow the
+checkpoint: a trunk trained with masks is evaluated, drafted and
+exported with them, so the checkpoint stamp records the masks
+directory and the tools pass it along rather than defaulting. A project
+with no `masks/` trains and drafts identically in every other respect.
+The curation tools that write these sidecars do not ship in this
+release; the format above is the contract if you produce them by other
+means.
+
 ## The lag fit and admission
 
 `prepare` cross-correlates the released model's predicted velocity
