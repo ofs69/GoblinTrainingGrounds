@@ -1,0 +1,3 @@
+[submodule "goblinscript"]
+	path = goblinscript
+	url = https://github.com/ofs69/GoblinScript

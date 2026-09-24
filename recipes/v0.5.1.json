@@ -1,0 +1,20 @@
+{
+ "name": "v0.5.1",
+ "description": "The v0.5.1 release: trunk trained on the c369 roster (with the negative-reel pool this tree no longer carries), deploy heads refit for 16 epochs with the envelope flow.",
+ "trunk": {
+  "epochs": 30,
+  "win": 6144,
+  "stride": 3072,
+  "batch": 1,
+  "cap_two_view": true,
+  "keep_pareto": true
+ },
+ "heads": {
+  "epochs": 16,
+  "win": 6144,
+  "env_flow": true,
+  "quiet_thr": 0.45,
+  "rev_cnt_w": 0.3,
+  "seed": 888
+ }
+}

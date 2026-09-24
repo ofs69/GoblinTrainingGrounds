@@ -1,0 +1,20 @@
+{
+ "name": "smoke",
+ "description": "The smoke recipe: the v0.6.0 recipe at two epochs on short windows, for tests/smoke.py.",
+ "trunk": {
+  "epochs": 2,
+  "win": 768,
+  "stride": 384,
+  "batch": 1,
+  "cap_two_view": true,
+  "keep_pareto": true
+ },
+ "heads": {
+  "epochs": 2,
+  "win": 768,
+  "env_flow": true,
+  "quiet_thr": 0.45,
+  "rev_cnt_w": 0.3,
+  "seed": 888
+ }
+}

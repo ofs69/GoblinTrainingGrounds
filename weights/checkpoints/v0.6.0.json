@@ -1,0 +1,8 @@
+{
+ "file": "v0.6.0.pt",
+ "bytes": 16909599,
+ "sha256": "5e26f2012bf17691dbc0485b874e8adfccba44340b71cb5ca24549bc63d6c74b",
+ "url": "https://github.com/ofs69/GoblinTrainingGrounds/releases/download/weights-1/v0.6.0.pt",
+ "recipe": "v0.6.0",
+ "kind": "model"
+}
