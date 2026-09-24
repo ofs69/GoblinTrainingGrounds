@@ -64,6 +64,15 @@ Per row, the model publishes:
 
 ## From tracks to a funscript
 
+A funscript is a JSON file whose `actions` list is a sequence of
+**points**, each `{"at": <milliseconds>, "pos": <0..100>}`; the player
+moves the device linearly from one point to the next, with `pos` 0 the
+bottom of the stroke and 100 the top. A point is only written where the
+straight line has to bend — a reversal, a hold, a change of pace — and
+everything between two points is interpolation. That is the output
+contract of everything below, and the input contract of training: the
+model is supervised from these points and nothing else.
+
 `goblintrain/jepa_infer.py` composes the tracks into actions: the
 envelope rescales the carrier without moving its zero crossings,
 reversal events snap and time the direction changes (with sub-frame

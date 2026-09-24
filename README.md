@@ -23,8 +23,11 @@ can load.
   ffprobe -version
   ```
 
-- Disk space for your project. Transcoded video and the latent caches are
-  the bulk of it; the caches are the larger part and can be rebuilt.
+- Disk space for your project, on an SSD. `prepare` and training stream
+  the latent caches constantly; on a spinning disk or a network drive the
+  disk, not the GPU, becomes the bottleneck. Transcoded video and the
+  latent caches are the bulk of the space; the caches are the larger part
+  and can be rebuilt.
 
 ## Setup
 
