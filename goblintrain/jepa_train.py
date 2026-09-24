@@ -998,6 +998,12 @@ def build_parser():
                          "the floor that truncates nothing on record; 8 "
                          "keeps 2 epochs of margin over it")
     ap.add_argument("--seed", type=int, default=888)
+    ap.add_argument("--init-from", default=None, metavar="CKPT",
+                    help="start from this trunk checkpoint's weights instead "
+                         "of a random init: the trunk fine-tuning path. Same "
+                         "basis and row grid required (asserted); the "
+                         "optimizer, schedule, epochs and validation split "
+                         "are this run's own, not the source's.")
     ap.add_argument("--runs-dir", default="runs/jepa")
     ap.add_argument("--resume", action="store_true",
                     help="continue a killed/OOM'd run from its per-epoch "
@@ -1095,6 +1101,19 @@ def run(args):
                       env_k=common.rows_at(ENV_SMOOTH_S, row_hz, odd=True),
                       mask_ch=MASK_CH,
                       dilations=DILATIONS).to(device)
+    if args.init_from:
+        # trunk fine-tuning: adjust a released trunk instead of earning a
+        # fresh one. load_model enforces the basis and refuses ensembles;
+        # a strict load refuses an architecture drift.
+        _, ick = load_model(args.init_from, "cpu")
+        ck_hz = ick.get("row_hz")
+        if ck_hz and abs(ck_hz - row_hz) > 0.01 * row_hz:
+            raise SystemExit(
+                f"--init-from: {args.init_from} was trained at {ck_hz:g} "
+                f"rows/s, this project runs {row_hz:g}")
+        model.load_state_dict(ick["model"])
+        print(f"trunk init from {Path(args.init_from).name} "
+              f"(epoch {ick.get('epoch')})", flush=True)
     for c in clips:      # ~2 s level target (style-adjacent, low-pass)
         k = common.level_pool_rows(c.times_ms)
         # taken inside each shot under --cut-aware-level: run across a
@@ -1159,6 +1178,8 @@ def run(args):
     if PHASE_CAP_WARM > 0 or args.cap_two_view:
         fingerprint["cap_shape"] = {"warm": PHASE_CAP_WARM,
                                     "two_view": args.cap_two_view}
+    if args.init_from:
+        fingerprint["init_from"] = Path(args.init_from).name
     start_epoch = 1
     if resuming:
         # no map_location: tensors return to their saved devices -- model &
@@ -1712,6 +1733,8 @@ def run(args):
                        "dilations": list(DILATIONS),
                        "cut_flag": True,
                        "coord": True}}
+        if args.init_from:    # provenance: this trunk is a fine-tune
+            ck["init_from"] = Path(args.init_from).name
         if improved:
             # one write, then copies: an epoch that improves a SECONDARY
             # criterion must never land on jepa_best.pt, which is the

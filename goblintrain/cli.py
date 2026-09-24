@@ -80,7 +80,8 @@ def cmd_train(args):
     from . import train
     with Project.open(args.project) as p:
         return train.run(p, recipe=args.recipe, from_=args.from_,
-                         roster=args.roster, name=args.name, sets=args.set)
+                         init_from=args.init_from, roster=args.roster,
+                         name=args.name, sets=args.set)
 
 
 def cmd_eval(args):
@@ -186,6 +187,11 @@ def build_parser():
                     help="fine-tune: refit the deploy heads on this shipped "
                          "trunk (v0.6.0, v0.5.1) or bare trunk checkpoint, "
                          "with the recipe's heads section")
+    sp.add_argument("--init-from", dest="init_from", metavar="RELEASE",
+                    help="fine-tune the trunk too: run the recipe's trunk "
+                         "stage starting from this shipped trunk (or bare "
+                         "trunk checkpoint) instead of a random init, then "
+                         "refit the heads as usual")
     sp.add_argument("--recipe", metavar="FILE",
                     help="the recipe (default: the one named by --from, "
                          "else recipes/v0.6.0.json)")

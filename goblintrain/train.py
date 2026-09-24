@@ -84,22 +84,32 @@ def resolve_from(spec):
     return trunk, spec
 
 
-def run(project, recipe=None, from_=None, roster="train", name=None,
-        sets=(), log=print):
+def run(project, recipe=None, from_=None, init_from=None, roster="train",
+        name=None, sets=(), log=print):
     """The ``train`` command. Returns the exit code."""
-    if from_ is None and recipe is None:
+    if from_ is None and init_from is None and recipe is None:
         raise ProjectError("give --from <release> to fit the deploy heads on "
-                           "a shipped trunk, or --recipe <file> to train a "
-                           "fresh trunk")
+                           "a shipped trunk, --init-from <release> to "
+                           "fine-tune the trunk too, or --recipe <file> to "
+                           "train a fresh trunk")
+    if from_ is not None and init_from is not None:
+        raise ProjectError("--from skips the trunk stage and --init-from "
+                           "trains it from a shipped trunk; give one or the "
+                           "other")
     trunk_ckpt = from_name = None
     if from_ is not None:
         trunk_ckpt, from_name = resolve_from(from_)
+    init_ckpt = init_name = None
+    if init_from is not None:
+        init_ckpt, init_name = resolve_from(init_from)
     if recipe is None:
-        recipe = RECIPES_DIR / f"{from_name}.json"
+        recipe = RECIPES_DIR / f"{from_name or init_name}.json"
         if not recipe.is_file():
             recipe = RECIPES_DIR / f"{DEFAULT_RECIPE}.json"
     rec = load_recipe(recipe)
     apply_sets(rec, sets)
+    if init_ckpt is not None:
+        rec["trunk"]["init_from"] = str(init_ckpt)
     if common.load_roster(project.root, roster) is None:
         raise ProjectError(f"no roster {roster!r} in the project; "
                            f"goblintrain prepare writes the train roster")
@@ -108,7 +118,9 @@ def run(project, recipe=None, from_=None, roster="train", name=None,
                  "roster": roster,
                  "trunk": None if trunk_ckpt is not None else rec["trunk"],
                  "heads": rec["heads"]}
-    name = name or (rec["name"] if trunk_ckpt is None else f"{from_name}-heads")
+    if name is None:
+        name = (f"{from_name}-heads" if trunk_ckpt is not None else
+                f"{init_name}-ft" if init_ckpt is not None else rec["name"])
     run_dir = project.root / "runs" / name
     rec_path = run_dir / "recipe.json"
     if (run_dir / "model.pt").is_file():
@@ -135,7 +147,8 @@ def run(project, recipe=None, from_=None, roster="train", name=None,
     try:
         print(f"== {time.strftime('%Y-%m-%d %H:%M:%S')} train {name}: "
               f"recipe {rec['name']}, roster {roster}"
-              + (f", trunk {trunk_ckpt.name}" if trunk_ckpt else ""),
+              + (f", trunk {trunk_ckpt.name}" if trunk_ckpt else "")
+              + (f", trunk init {init_ckpt.name}" if init_ckpt else ""),
               flush=True)
         if trunk_ckpt is None:
             trunk_dir = run_dir / "trunk"
