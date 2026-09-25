@@ -4,16 +4,16 @@
 python goblintrain.py export <project> --run mine --pack mine
 ```
 
-`export` turns a checkpoint into a **pack** inside a GoblinScript
-bundle and then proves the export against the Python pipeline. The
-bundle is `<project>/bundle` unless `--bundle` says otherwise; the
-first export writes the whole bundle, a later one adds its pack after
-checking the perception matches.
+`export` converts a checkpoint into a **pack** in a GoblinScript bundle.
+Then it verifies the export against the Python pipeline.
 
-## The bundle
+- The bundle is `<project>/bundle` unless you set `--bundle`.
+- The first export writes the full bundle.
+- A later export checks that the perception matches, then adds its pack.
 
-A bundle (format 5) holds one frozen perception and any number of
-packs:
+## Bundle
+
+A bundle (format 5) holds one frozen perception and any number of packs:
 
 ```
 bundle/
@@ -26,63 +26,75 @@ bundle/
     env_step.onnx      one step of the envelope's AR decode
 ```
 
-The pack's manifest block records the decode contract: chunk and
-context lengths restated on the bundle's row grid, the styling
-constants (stillness gate, dwell lock thresholds, reversal snap,
-amplitude bound, sub-frame mode, …) and the envelope's seed and step
-count. These values are read from `goblintrain/jepa_infer.py` and
-`goblintrain/common.py` at export time, never restated by hand: the
-bundle and the Python decoder are one decode, and a literal would go
-stale silently the first time a constant moved.
+The manifest block of the pack records the decode contract:
 
-The manifest's `checkpoint` field points at the source checkpoint,
-repo-relative when it lives inside this tree, and is what `parity`
-uses as its Python reference by default.
+- chunk and context lengths, converted to the row grid of the bundle
+- the styling constants (stillness gate, dwell lock thresholds, reversal
+  snap, amplitude bound, sub-frame mode, …)
+- the seed and step count of the envelope.
 
-## Verification, in layers
+Export reads these values from `goblintrain/jepa_infer.py` and
+`goblintrain/common.py`. Nobody copies them by hand. The bundle and the
+Python decoder are one decode. A hand-copied literal becomes incorrect
+without warning when a constant changes.
 
-1. **Trace-time verify** (part of `export`): every traced graph is run
-   under ONNX Runtime against the torch modules it was traced from, on
-   fixtures shaped like real data, and the export refuses on a
-   mismatch. Graphs are traced into a staging directory and promoted
-   file by file only once everything passed, so a failed export leaves
-   the standing bundle untouched.
-2. **Parity** (runs after export unless `--no-parity`): a prepared clip
-   of your project goes through the bundle's graphs and through the
-   Python pipeline; latents must correlate past the gate and every
-   published track (phase, level, rails, envelope — autoregressive
-   decode included — and the reversal heads) must agree row for row
-   within tolerance. The level and the rails are sharpened
-   expectations, so on a row where two bins nearly tie the two
-   backends' fp32 accumulation order can move that one row by a tenth
-   of a position; a track whose worst row is past the bar still passes
-   when its mean difference stays under a tenth of the bar and its
-   correlation holds, and the report prints the worst row, the mean and
-   the count over the bar so those rows read as what they are. A wrong
-   graph moves every row and fails both. `--clip <id>` picks the clip.
-3. **`--rust`**: the same rows are handed to the built GoblinScript
-   binary, closing the loop with the decoder people actually run.
-4. **`goblintrain.py check`**: the standing decode-invariant check —
-   fixtures pinning the constants both decoders copy, so a value moved
-   on one side only cannot pass unnoticed.
+The `checkpoint` field of the manifest points to the source checkpoint.
+The path is repo-relative when the checkpoint is inside this tree.
+`parity` uses it as the default Python reference.
 
-## Using a pack
+## Verification layers
 
-GoblinScript loads the bundle directory as-is, and `--model` picks a
-pack by the name `--pack` gave it:
+1. **Trace-time verify** (part of `export`): ONNX Runtime runs each traced
+   graph against the torch module it was traced from. The fixtures have
+   the shape of real data. On a mismatch, the export stops. Graphs are
+   traced into a staging directory. They are promoted file by file only
+   after all checks pass. Thus a failed export does not change the
+   existing bundle.
+2. **Parity** (runs after export unless `--no-parity`): one prepared clip
+   of your project goes through the bundle graphs and through the Python
+   pipeline. Requirements:
+   - latents correlate above the gate
+   - each published track agrees row for row within tolerance: phase,
+     level, rails, envelope (autoregressive decode included) and the
+     reversal heads.
+
+   The level and the rails are sharpened expectations. On a row where two
+   bins almost tie, the two backends use a different fp32 accumulation
+   order. This can move that one row by a tenth of a position. Thus a
+   track whose worst row exceeds the bar still passes when both are true:
+   - its mean difference is less than a tenth of the bar
+   - its correlation holds.
+
+   The report prints the worst row, the mean and the count of rows over
+   the bar. A wrong graph moves every row and fails both conditions.
+   `--clip <id>` selects the clip.
+3. **`--rust`**: sends the same rows to the built GoblinScript binary.
+   This tests the decoder that users run.
+4. **`goblintrain.py check`**: the standing decode-invariant check.
+   Fixtures pin the constants that both decoders copy. Thus a value
+   changed on one side only fails the check.
+
+## Use a pack
+
+GoblinScript loads the bundle directory directly. `--model` selects a pack
+by the name that `--pack` gave it:
 
 ```
 goblinscript --bundle projects/mine/bundle --model mine video.mp4
 ```
 
-A directory passed with `--bundle` wins over the bundle a release
-binary carries, so a released `goblinscript.exe` drafts with your pack
-the same way a build from source does. `--models mine,v0.6.0` writes
-two packs side by side, and the review page switches a script's model
-or lays another pack's line under it. The latent cache keys on the
-perception alone, so switching packs re-runs only the heads, not the
-encode.
+- A directory passed with `--bundle` overrides the bundle inside a release
+  binary. Thus a released `goblinscript.exe` drafts with your pack, the
+  same as a build from source.
+- `--models mine,v0.6.0` writes the drafts of two packs side by side. The
+  review page can switch the model of a script, or show the line of
+  another pack below it.
+- The latent cache key depends only on the perception. Thus a pack switch
+  runs only the heads again, not the encode.
 
-For a standalone binary that carries your pack without the flag, copy
-the bundle to the GoblinScript checkout root and build it with
-`--features embed`; its README covers that build and the release zip.
+To build a standalone binary that includes your pack without the flag:
+
+1. Copy the bundle to the root of the GoblinScript checkout.
+2. Build with `--features embed`.
+
+The GoblinScript README describes that build and the release zip.

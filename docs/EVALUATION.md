@@ -6,46 +6,55 @@ python goblintrain.py eval <project> --run v0.6.0
 python goblintrain.py eval <project> --run mine --ref v0.6.0-holdout
 ```
 
-`eval` drafts a roster's clips with a model and **reads** the written
-funscripts — the actual `.funscript` output, not internal tracks —
-against the human scripts. Drafts land in
-`<project>/drafts/<name>/` (default `<model>-<roster>`) with a
-`metrics.json`; a clip already drafted is only re-read, and `--rescore`
-re-reads drafts that already carry a read.
+`eval` drafts the clips of a roster with a model. Then it **reads** the
+written funscripts and compares them to the human scripts. The read uses
+the `.funscript` output, not internal tracks.
 
-`--run` takes a run of the project, a shipped release (`v0.6.0`,
-`v0.5.1`) or a checkpoint path. `--roster` defaults to `holdout`: the
-clips `prepare` set aside once and training never saw.
+- Drafts go to `<project>/drafts/<name>/` with a `metrics.json`. The
+  default name is `<model>-<roster>`.
+- If a clip already has a draft, `eval` reads it and does not draft it
+  again.
+- `--rescore` reads again the drafts that already have a read.
 
-## What the read reports
+`--run` takes one of these:
 
-Per clip and pooled, the read follows one rule: **every mean carries a
-tail companion.** An average that improved while an artifact got worse
-is a worse model, so rates of the failure modes are printed beside the
-averages rather than folded into them. The families:
+- a run of the project
+- a shipped release (`v0.6.0`, `v0.5.1`)
+- a checkpoint path.
 
-- **Phase and level** — how the drafted motion correlates with the
-  script's, and where the drafted positions sit.
-- **Speed** — drafted speed against scripted speed, with the share of
-  over-speed strokes (>2x, >3x) and slow-passage behavior read
-  separately; stub and broken-stroke rates ride beside them.
-- **Reversal timing** — how far drafted reversals land from scripted
-  ones, with the within-one-frame share.
-- **Dwells** — precision and recall of parked passages, top and bottom
+`--roster` defaults to `holdout`: the clips that `prepare` set aside one
+time and that training never saw.
+
+## Read output
+
+The read reports per clip and pooled. Rule: **each mean has a tail
+metric.** An average that improved while an artifact got worse counts as a
+worse model. Thus the read prints failure-mode rates next to the averages,
+not folded into them. The metric families:
+
+- **Phase and level**: correlation of the drafted motion with the script
+  motion, and the location of the drafted positions.
+- **Speed**: drafted speed against scripted speed. Also reported:
+  - share of over-speed strokes (>2x, >3x)
+  - slow-passage behavior, separately
+  - stub rate and broken-stroke rate.
+- **Reversal timing**: distance from drafted reversals to scripted
+  reversals, and the share within one frame.
+- **Dwells**: precision and recall of parked passages, top and bottom
   separately.
-- **Amplitude** — drafted excursion against the script's, so amplitude
-  collapse is visible even where correlation looks fine.
+- **Amplitude**: drafted excursion against script excursion. This shows
+  amplitude collapse also where correlation looks normal.
 
-`--ref <name>` prints another eval directory beside this one with
-paired bootstrap intervals over the shared clips, which is how a
-fine-tune is compared against the release it started from: same clips,
-same read, difference with an interval instead of two loose numbers.
+`--ref <name>` prints a second eval directory next to this one, with
+paired bootstrap intervals over the shared clips. Use it to compare a
+fine-tune against its source release: same clips, same read, and a
+difference with an interval instead of two separate numbers.
 
 ## Ground rules
 
-- The holdout is drawn once and never rewritten; numbers on it stay
+- The holdout is drawn one time and never rewritten. Its numbers stay
   comparable across runs of the same project.
-- Reads come from written funscripts, so every decode stage — styling,
-  snapping, cleaning — is inside the measurement.
-- Never trade an artifact regression against an average gain. The read
-  prints both; the judgment stays with you.
+- Reads use the written funscripts. Thus every decode stage (styling,
+  snapping, cleaning) is part of the measurement.
+- Do not accept an artifact regression in exchange for an average gain.
+  The read prints both. You make the decision.
