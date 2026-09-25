@@ -17,6 +17,31 @@ released `v0.6.0.pt` itself was produced from its trunk, which this
 command reproduces tensor for tensor up to CUDA non-determinism in the
 flow head.
 
+## Fine-tune the trunk too
+
+```
+python goblintrain.py train <project> --init-from v0.6.0 --name mine-trunk --set trunk.lr=3e-5 --set trunk.epochs=5
+```
+
+`--init-from <release>` runs the recipe's trunk stage starting from that
+release's trunk weights instead of a random init, then refits the heads
+as usual. The trunk moves; use it when your clips show the model
+something the release did not see, and pass a fraction of the recipe's
+learning rate (the released trunk trained at 3e-4) and a few epochs, so
+the run adjusts the release rather than re-earning it. The checkpoint
+must share the project's basis and row grid, which the load asserts.
+
+Measured on the release's own roster (c367, 5 epochs at 3e-5, on an RTX
+4090): the trunk holds the released level from epoch 1 (val mean 0.884,
+the release's own best) and the rank-roster draft comes back identical
+to the release inside the paired bootstrap, tails included. Fine-tuning
+on the data the release already trained on changes nothing, which is
+the check that the path does no harm; a gain has to come from new
+clips. Cost: an epoch is about nine minutes on 367 clips, then the h0
+store rebuilds for the new trunk (about twelve minutes) before the
+heads' few minutes. The run resumes like any other, and its trunk
+checkpoint records which release it started from.
+
 ## A fresh trunk
 
 ```

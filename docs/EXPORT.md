@@ -52,7 +52,14 @@ uses as its Python reference by default.
    Python pipeline; latents must correlate past the gate and every
    published track (phase, level, rails, envelope — autoregressive
    decode included — and the reversal heads) must agree row for row
-   within tolerance. `--clip <id>` picks the clip.
+   within tolerance. The level and the rails are sharpened
+   expectations, so on a row where two bins nearly tie the two
+   backends' fp32 accumulation order can move that one row by a tenth
+   of a position; a track whose worst row is past the bar still passes
+   when its mean difference stays under a tenth of the bar and its
+   correlation holds, and the report prints the worst row, the mean and
+   the count over the bar so those rows read as what they are. A wrong
+   graph moves every row and fails both. `--clip <id>` picks the clip.
 3. **`--rust`**: the same rows are handed to the built GoblinScript
    binary, closing the loop with the decoder people actually run.
 4. **`goblintrain.py check`**: the standing decode-invariant check —
@@ -61,6 +68,21 @@ uses as its Python reference by default.
 
 ## Using a pack
 
-GoblinScript loads the bundle directory as-is; `--pack` names are what
-a person selects between. The latent cache keys on the perception
-alone, so switching packs re-runs only the heads, not the encode.
+GoblinScript loads the bundle directory as-is, and `--model` picks a
+pack by the name `--pack` gave it:
+
+```
+goblinscript --bundle projects/mine/bundle --model mine video.mp4
+```
+
+A directory passed with `--bundle` wins over the bundle a release
+binary carries, so a released `goblinscript.exe` drafts with your pack
+the same way a build from source does. `--models mine,v0.6.0` writes
+two packs side by side, and the review page switches a script's model
+or lays another pack's line under it. The latent cache keys on the
+perception alone, so switching packs re-runs only the heads, not the
+encode.
+
+For a standalone binary that carries your pack without the flag, copy
+the bundle to the GoblinScript checkout root and build it with
+`--features embed`; its README covers that build and the release zip.

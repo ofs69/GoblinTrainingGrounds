@@ -7,7 +7,9 @@ is one of the stage's flags and everything the recipe leaves out keeps
 the flag's default. ``--from <release>`` skips the trunk stage and refits
 the heads on the shipped trunk, which is the fine-tuning path: the
 released model's trunk, the released recipe's heads, the project's own
-clips. ``--recipe`` alone trains the trunk first.
+clips. ``--init-from <release>`` runs the trunk stage from that release's
+weights instead of a random init and then refits the heads: the trunk
+fine-tuning path. ``--recipe`` alone trains the trunk first.
 
 A run is ``<project>/runs/<name>``. It holds the effective recipe, the
 log, the trunk stage under ``trunk/`` and the finished model as

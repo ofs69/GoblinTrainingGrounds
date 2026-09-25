@@ -140,6 +140,13 @@ The recipe holds every setting the released trunk used. A flag on the
 command line overrides one recipe key. Every run records the settings it
 resolved to in its own directory under `runs/`.
 
+Between the two, a trunk that starts from the released one and moves a
+little, for clips that show the model something new:
+
+```
+python goblintrain.py train projects/mine --init-from v0.6.0 --name mine-trunk --set trunk.lr=3e-5 --set trunk.epochs=5
+```
+
 Draft a video with a released model (the default is v0.6.0), or with a
 run of yours:
 
