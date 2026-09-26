@@ -1,10 +1,12 @@
 # Evaluation
 
 ```
-python goblintrain.py eval <project> --run mine
 python goblintrain.py eval <project> --run v0.6.0
 python goblintrain.py eval <project> --run mine --ref v0.6.0-holdout
 ```
+
+Evaluate every run against the release. Use a run only if it is better
+than the release on the holdout (see `docs/TRAINING.md`, "Corpus size").
 
 `eval` drafts the clips of a roster with a model. Then it **reads** the
 written funscripts and compares them to the human scripts. The read uses
@@ -12,8 +14,11 @@ the `.funscript` output, not internal tracks.
 
 - Drafts go to `<project>/drafts/<name>/` with a `metrics.json`. The
   default name is `<model>-<roster>`.
-- If a clip already has a draft, `eval` reads it and does not draft it
-  again.
+- If every clip of the roster already has a draft from the same
+  checkpoint, `eval` reads the drafts and does not draft again. Otherwise
+  it drafts the whole roster. If the drafts in the directory came from
+  another checkpoint, `eval` deletes them and drafts again. An example is
+  a run that was trained again under the same name.
 - `--rescore` reads again the drafts that already have a read.
 
 `--run` takes one of these:
@@ -22,8 +27,9 @@ the `.funscript` output, not internal tracks.
 - a shipped release (`v0.6.0`, `v0.5.1`)
 - a checkpoint path.
 
-`--roster` defaults to `holdout`: the clips that `prepare` set aside one
-time and that training never saw.
+`--roster` defaults to `holdout`: the clips that `prepare` set aside and
+that training never saw. It is empty if the project had fewer than 8
+admitted clips at its first `prepare` of all clips.
 
 ## Read output
 
@@ -47,8 +53,8 @@ not folded into them. The metric families:
 
 `--ref <name>` prints a second eval directory next to this one, with
 paired bootstrap intervals over the shared clips. Use it to compare a
-fine-tune against its source release: same clips, same read, and a
-difference with an interval instead of two separate numbers.
+run against its source release: same clips, same read, and a difference
+with an interval instead of two separate numbers.
 
 ## Ground rules
 

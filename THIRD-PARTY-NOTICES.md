@@ -8,10 +8,9 @@ The pipeline uses third-party weights. This repository does not store
 them. Each is downloaded from its own source and stays under its own
 license:
 
-- **V-JEPA 2 ViT-B video encoder** (Meta AI, `facebookresearch/vjepa2`).
-  Downloaded through `torch.hub` on first use. `fetch --encoder` downloads
-  it immediately. The weights belong to Meta and are distributed under the
-  license in their repository. This repository does not mirror or modify
+- **V-JEPA 2.1 ViT-B video encoder** (Meta AI, `facebookresearch/vjepa2`).
+  `fetch` downloads it through `torch.hub`. The weights belong to Meta
+  and are distributed under the license in their repository. This repository does not mirror or modify
   them. The exported GoblinScript bundle embeds a traced graph of them,
   for local inference only.
 

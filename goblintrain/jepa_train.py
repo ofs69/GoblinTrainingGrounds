@@ -1022,6 +1022,10 @@ def run(args):
     gate_ids = [g for spec in GATE_IDS
                      for g in (common.load_roster(args.dataset, spec)
                                if not str(spec).isdigit() else [spec]) or []]
+    # the training clips by script content, for eval's seen/unseen test:
+    # clip IDs mean nothing outside their project
+    trained_sigs = sorted(set(common.clip_sigs(args.dataset,
+                                               args.ids).values()))
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     runs = Path(args.runs_dir)
@@ -1068,6 +1072,9 @@ def run(args):
         splits.append((tr, va))
         print(f"[{c.id}] {len(tr)} train windows / {len(segs)} val segs "
               f"({sum(hi - lo for lo, hi in segs)} rows)", flush=True)
+    if not any(tr for tr, _ in splits):
+        raise SystemExit(f"no training windows: no clip gives a {args.win}-"
+                         f"row window with supervised motion")
     # effective per-row supervision mask: seg-split val exclusion AND (with
     # gap-mask) script coverage
     sup_eff = []
@@ -1112,6 +1119,9 @@ def run(args):
                 f"--init-from: {args.init_from} was trained at {ck_hz:g} "
                 f"rows/s, this project runs {row_hz:g}")
         model.load_state_dict(ick["model"])
+        # add the training clips of the source trunk
+        trained_sigs = sorted(set(trained_sigs)
+                              | set(ick.get("trained_sigs", ())))
         print(f"trunk init from {Path(args.init_from).name} "
               f"(epoch {ick.get('epoch')})", flush=True)
     for c in clips:      # ~2 s level target (style-adjacent, low-pass)
@@ -1699,6 +1709,7 @@ def run(args):
         ck = {"model": model.state_dict(), "v_std": v_std,
               "epoch": epoch,
               "corrs0": {k: v[0] for k, v in corrs.items()},
+              "trained_sigs": trained_sigs,
               "vmag0": {k: v[1] for k, v in corrs.items()},
               "feat_dir": FEAT_DIR_DEFAULT,
               "row_hz": row_hz,

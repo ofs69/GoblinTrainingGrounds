@@ -3,41 +3,65 @@ import argparse
 import sys
 
 from . import importer, tx
-from .project import Project, ProjectError
+from .project import Project, ProjectError, named
 
 
 def cmd_init(args):
-    p = Project.create(args.project)
-    print(f"created project {p.root}")
-    print("it will hold your media and the private map: never put it in git")
+    p = Project.create(named(args.project))
+    print(f"created project {p.root.name} at {p.root}")
+    print("it will hold your media and the private map; git ignores it")
     return 0
 
 
 def cmd_import(args):
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         return importer.run(p, args.paths, yes=args.yes,
                             keep_going=getattr(args, "continue"))
 
 
 def cmd_status(args):
-    with Project.open(args.project) as p:
+    from . import boundaries, common, extract, lagfit, prepare
+    from .project import latent_stamp_problem
+    with Project.open(named(args.project)) as p:
         recs = p.manifest()
         problems = p.verify()
         if not recs:
             print("no clips yet; add some with: goblintrain import "
-                  f"{p.root} <video or folder>")
+                  f"{p.root.name} <video or folder>")
         else:
-            print(f"{'id':>6}  {'length':>8}  {'actions':>7}")
+            hold = common.load_roster(p.root, "holdout")
+            train = common.load_roster(p.root, "train") or []
+            roster = {**{i: "train" for i in train},
+                      **{i: "holdout" for i in hold or []}}
+            print(f"{'id':>6}  {'length':>8}  {'actions':>7}  "
+                  f"{'prepared':<8}  {'roster':<7}  note")
             for r in sorted(recs, key=lambda r: r["id"]):
+                i = r["id"]
                 acts = r.get("n_actions", 0) if p.is_scripted(r) else "none"
-                print(f"{r['id']:>6}  {importer.hms(r.get('duration_ms')):>8}  "
-                      f"{acts:>7}")
+                lat = extract.path(p, i)
+                ready = lat.is_file() and boundaries.path(p, i).is_file()
+                note = ""
+                side = lagfit.load(p, i) if p.is_scripted(r) else None
+                if side is not None:
+                    why = prepare.admitted(side)
+                    note = f"not admitted: {why}" if why else ""
+                if args.verify and lat.is_file():
+                    bad = latent_stamp_problem(lat, p.config["perception"])
+                    if bad:
+                        problems.append(f"{i}: latents {bad}")
+                print(f"{i:>6}  {importer.hms(r.get('duration_ms')):>8}  "
+                      f"{acts:>7}  {'yes' if ready else 'no':<8}  "
+                      f"{roster.get(i, '-'):<7}  {note}".rstrip())
             total = sum(r.get("duration_ms") or 0 for r in recs)
             n_un = sum(1 for r in recs if not p.is_scripted(r))
             n_sc = len(recs) - n_un
             print(f"{n_sc} scripted clip{'s' if n_sc != 1 else ''}"
                   + (f" and {n_un} without a script" if n_un else "")
                   + f", {importer.hms(total)} of video")
+            print(f"train roster {len(train)}, "
+                  + (f"holdout {len(hold)}" if hold is not None else
+                     "holdout not drawn yet (a prepare of all clips "
+                     "draws it)"))
         if tx.last_trash(p) is not None:
             print("the trash holds removed clips; goblintrain purge empties it")
         for msg in problems:
@@ -46,7 +70,7 @@ def cmd_status(args):
 
 
 def cmd_remove(args):
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         if args.undo:
             trash = tx.last_trash(p)
             if trash is None:
@@ -64,7 +88,7 @@ def cmd_remove(args):
 
 
 def cmd_purge(args):
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         n = tx.purge(p)
         print(f"purged {n} trash entr{'y' if n == 1 else 'ies'}")
         return 0
@@ -72,13 +96,13 @@ def cmd_purge(args):
 
 def cmd_prepare(args):
     from . import prepare          # torch loads only when a stage runs
-    with Project.open(args.project) as p:
-        return prepare.run(p, args.ids)
+    with Project.open(named(args.project)) as p:
+        return prepare.run(p, args.ids, lag_fit=args.lag_fit)
 
 
 def cmd_train(args):
     from . import train
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         return train.run(p, recipe=args.recipe, from_=args.from_,
                          init_from=args.init_from, roster=args.roster,
                          name=args.name, sets=args.set)
@@ -86,14 +110,14 @@ def cmd_train(args):
 
 def cmd_eval(args):
     from . import evaluate
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         return evaluate.run(p, args.run, roster=args.roster, ref=args.ref,
                             name=args.name, rescore=args.rescore)
 
 
 def cmd_export(args):
     from . import export
-    with Project.open(args.project) as p:
+    with Project.open(named(args.project)) as p:
         return export.run(p, args.run, pack=args.pack, label=args.label,
                           bundle=args.bundle, clip_id=args.clip, rust=args.rust,
                           exe=args.exe, parity=not args.no_parity)
@@ -101,13 +125,13 @@ def cmd_export(args):
 
 def cmd_draft(args):
     from . import draft
-    return draft.run(args.videos, model=args.model, project_dir=args.project,
+    return draft.run(args.videos, model=args.model, project=args.project,
                      out=args.out, force=args.force)
 
 
 def cmd_fetch(args):
     from . import fetch
-    return fetch.run(args.names, encoder=args.encoder)
+    return fetch.run(args.names)
 
 
 def cmd_check(args):
@@ -120,13 +144,15 @@ def build_parser():
     ap = argparse.ArgumentParser(
         prog="goblintrain",
         description="Train, fine-tune, evaluate and export GoblinScript models. "
-                    "A project directory holds one dataset; see README.md.")
+                    "A project holds one dataset and lives in projects/ under "
+                    "its name; see README.md.")
     sub = ap.add_subparsers(dest="command", required=True)
 
     def project_arg(sp):
-        sp.add_argument("project", help="the project directory")
+        sp.add_argument("project",
+                        help="the project's name (a directory in projects/)")
 
-    sp = sub.add_parser("init", help="create a project directory")
+    sp = sub.add_parser("init", help="create a project in projects/")
     project_arg(sp)
     sp.set_defaults(fn=cmd_init)
 
@@ -166,13 +192,21 @@ def build_parser():
 
     sp = sub.add_parser(
         "prepare",
-        help="shot boundaries, latents and the lag fit for every clip that "
-             "lacks them, then admission into the train and holdout rosters",
+        help="shot boundaries and latents for every clip that lacks them, "
+             "then admission into the train and holdout rosters",
         description="Works clip by clip and only on what is missing; stop it "
-                    "at any time and run it again. Needs a CUDA device.")
+                    "at any time and run it again. The scripts are taken as "
+                    "synchronized with their videos unless --lag-fit. Needs "
+                    "a CUDA device.")
     project_arg(sp)
     sp.add_argument("ids", nargs="*",
                     help="clip ids or roster names (default: every clip)")
+    sp.add_argument("--lag-fit", action="store_true",
+                    help="also fit each script's offset to its video against "
+                         "the released model; training and eval then shift "
+                         "the script by it, and a clip whose fit is not "
+                         "confident, or that looks inverted or drifting, is "
+                         "not admitted")
     sp.set_defaults(fn=cmd_prepare)
 
     sp = sub.add_parser(
@@ -208,7 +242,9 @@ def build_parser():
         "eval",
         help="draft a roster with a model and read the written funscripts",
         description="Drafts land in <project>/drafts/<model>-<roster>/ with "
-                    "their metrics.json; existing drafts are only re-read. "
+                    "their metrics.json. Drafts from the same checkpoint "
+                    "are only read again; drafts from another checkpoint "
+                    "are replaced. "
                     "Needs a CUDA device to draft.")
     project_arg(sp)
     sp.add_argument("--run", required=True, metavar="MODEL",
@@ -253,14 +289,15 @@ def build_parser():
         "draft", help="one video in, one funscript out",
         description="The funscript lands beside the video as "
                     "<stem>.funscript. The video is kept, transcoded, in a "
-                    "drafting project (projects/drafts by default) so a "
-                    "second draft only re-runs what is missing.")
+                    "drafting project (drafts by default) so a second draft "
+                    "only re-runs what is missing.")
     sp.add_argument("videos", nargs="+", metavar="VIDEO")
     sp.add_argument("--model", metavar="MODEL",
                     help="a shipped release (default: v0.6.0), a checkpoint "
                          "path or a run directory")
-    sp.add_argument("--project", metavar="DIR",
-                    help="the drafting project (created when absent)")
+    sp.add_argument("--project", metavar="NAME", default="drafts",
+                    help="the drafting project's name (default: drafts; "
+                         "created when absent)")
     sp.add_argument("--out", metavar="DIR",
                     help="write the funscripts here instead of beside the "
                          "videos")
@@ -269,10 +306,10 @@ def build_parser():
     sp.set_defaults(fn=cmd_draft)
 
     sp = sub.add_parser("fetch", help="download and hash-check the shipped "
-                                      "weights")
-    sp.add_argument("names", nargs="*", help="which (default: all)")
-    sp.add_argument("--encoder", action="store_true",
-                    help="also fetch the V-JEPA encoder through torch.hub now")
+                                      "weights, and fetch the V-JEPA encoder "
+                                      "through torch.hub")
+    sp.add_argument("names", nargs="*",
+                    help="which checkpoints (default: all)")
     sp.set_defaults(fn=cmd_fetch)
 
     sp = sub.add_parser("check", help="the decode-invariant check: durations "

@@ -1,18 +1,23 @@
 """Prepare: everything training needs from a clip, clip by clip, only what
 is missing.
 
-Three stages, each a cache the clip either has or does not: shot
-boundaries (TransNetV2), latents (the frozen perception pass) and the
-script-to-video lag fit against the released model. Every stage writes its
-file whole or not at all, so the command can be stopped at any time and
-run again. A clip without a script gets no lag fit.
+Two stages, each a cache the clip either has or does not: shot boundaries
+(TransNetV2) and latents (the frozen perception pass). Every stage writes
+its file whole or not at all, so the command can be stopped at any time
+and run again.
 
-After the caches, admission: a scripted clip joins the training roster when
-its lag fit is confident (peak at least ``ADMIT_PEAK``), the fit does not
-suspect inverted polarity, and no drift alarm spreads past one reversal
-tolerance. ``rosters/holdout.json`` is drawn once from the admitted clips
-and never rewritten; ``rosters/train.json`` is the admitted clips outside
-it and is rewritten on every run.
+The scripts are taken as synchronized with their videos. ``--lag-fit``
+adds a third stage for the scripted clips: the script-to-video lag fit
+against the released model. Training and scoring shift a script by its
+clip's fitted lag; a clip without a fit is not shifted.
+
+After the caches, admission. A scripted clip with latents joins the
+training roster. A clip that has a lag fit joins only when the fit is
+confident (peak at least ``ADMIT_PEAK``), the fit does not suspect
+inverted polarity, and no drift alarm spreads past one reversal tolerance.
+``rosters/holdout.json`` is drawn once from the admitted clips, by the
+first prepare of all clips, and never rewritten; ``rosters/train.json``
+is the admitted clips outside it and is rewritten on every run.
 """
 import json
 import time
@@ -41,11 +46,16 @@ def admitted(side):
     return None
 
 
-def write_rosters(project, admitted_ids, log):
+def write_rosters(project, admitted_ids, log, draw=True):
     """The training roster from the admitted clips, minus a holdout drawn
-    once."""
+    once. With ``draw`` False (a prepare of some clips only), a holdout
+    that is not drawn yet stays undrawn. Thus a prepare of some clips
+    cannot fix the holdout to those clips."""
     hold = common.load_roster(project.root, "holdout")
-    if hold is None:
+    if hold is None and not draw:
+        log("holdout not drawn yet: a prepare of all clips draws it")
+        hold = []
+    elif hold is None:
         hold = sorted(admitted_ids)[HOLDOUT_EVERY - 1::HOLDOUT_EVERY]
         atomic_write_text(common.roster_path(project.root, "holdout"),
                           json.dumps({"note": "held out of training for "
@@ -60,7 +70,7 @@ def write_rosters(project, admitted_ids, log):
     return train, hold
 
 
-def caches(project, ids, log=print, ckpt=None, lag=True):
+def caches(project, ids, log=print, ckpt=None, lag=False):
     """Boundaries, latents and (for scripted clips, when ``lag``) the lag
     fit of every clip in ``ids`` that lacks them."""
     recs = {r["id"]: r for r in project.manifest()}
@@ -69,7 +79,8 @@ def caches(project, ids, log=print, ckpt=None, lag=True):
     need_l = [i for i in ids if not extract.path(project, i).is_file()]
     need_g = [i for i in scripted if lagfit.load(project, i) is None]
     log(f"{len(ids)} clips: {len(need_b)} need boundaries, {len(need_l)} "
-        f"need latents, {len(need_g)} need a lag fit")
+        f"need latents"
+        + (f", {len(need_g)} need a lag fit" if lag else ""))
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if (need_b or need_l or need_g) and device != "cuda":
         log("no CUDA device: this will be very slow")
@@ -106,9 +117,10 @@ def caches(project, ids, log=print, ckpt=None, lag=True):
         log(f"lag fits: {len(need_g)} written in {(time.time() - t0) / 60:.1f} min")
 
 
-def run(project, ids=None, log=print, ckpt=None):
-    """The ``prepare`` command over ``ids`` (default: every clip). Returns
-    the exit code."""
+def run(project, ids=None, log=print, ckpt=None, lag_fit=False):
+    """The ``prepare`` command over ``ids`` (default: every clip); with
+    ``lag_fit`` also the lag fit of every scripted clip. Returns the exit
+    code."""
     recs = {r["id"]: r for r in project.manifest()}
     if ids:
         ids = common.resolve_ids(ids, project.root)
@@ -120,20 +132,22 @@ def run(project, ids=None, log=print, ckpt=None):
     if not ids:
         log("nothing to prepare: the project has no clips")
         return 0
-    caches(project, ids, log, ckpt)
+    caches(project, ids, log, ckpt, lag=lag_fit)
 
-    # admission over every scripted clip that has a lag fit, in the project
+    # admission over every scripted clip with latents, in the project; a
+    # clip with a lag fit must also pass the fit's checks
     admit, refused = [], []
     for i in sorted(r for r in recs if project.is_scripted(recs[r])):
-        side = lagfit.load(project, i)
-        if side is None or not extract.path(project, i).is_file():
+        if not extract.path(project, i).is_file():
             continue
-        why = admitted(side)
+        side = lagfit.load(project, i)
+        why = admitted(side) if side is not None else None
         (refused if why else admit).append((i, why))
     for i, why in refused:
         if i in set(ids):
             log(f"  [{i}] not admitted: {why}")
-    train, hold = write_rosters(project, [i for i, _ in admit], log)
+    train, hold = write_rosters(project, [i for i, _ in admit], log,
+                                draw=set(ids) >= set(recs))
     log(f"admitted {len(admit)} of {len(admit) + len(refused)} prepared clips; "
         f"train roster {len(train)}, holdout {len(hold)}")
     return 0

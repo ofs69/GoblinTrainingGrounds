@@ -1,6 +1,7 @@
 """The transaction layer, exercised on a throwaway project under tests/.tmp:
 a committed add, a crash before the records landed, a crash after they
-landed, remove, undo, purge, the lock, and duplicate-id refusal.
+landed, remove, undo, purge, rosters and IDs across a remove, the lock, and
+duplicate-id refusal.
 
 Run: python tests/test_tx.py
 """
@@ -13,7 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-from goblintrain import tx                                   # noqa: E402
+from goblintrain import common, tx                           # noqa: E402
 from goblintrain.project import Project, ProjectError        # noqa: E402
 
 TMP = HERE / ".tmp" / "tx"
@@ -171,6 +172,30 @@ def test_remove_undo_purge():
         assert tx.last_trash(p) is None
 
 
+def test_remove_rosters_and_ids():
+    """A removed clip leaves every roster and its ID is never reissued, even
+    after a purge; undo puts it back into its roster."""
+    with Project.open(TMP / "proj") as p:
+        for _ in range(2):
+            i = p.next_id()
+            with tx.Transaction(p, "add", [i]) as t:
+                t.commit(stage_clip(p, t, i), records=[record(i)])
+        top = max(p.ids())
+        (p.root / "rosters" / "holdout.json").write_text(
+            json.dumps({"ids": [top]}))
+        tx.remove_clip(p, top)
+        assert common.load_roster(p.root, "holdout") == []
+        assert p.next_id() > top
+        tx.undo_remove(p, tx.last_trash(p))
+        assert common.load_roster(p.root, "holdout") == [top]
+        tx.remove_clip(p, top)
+        tx.purge(p)
+    with Project.open(TMP / "proj") as p:
+        assert p.next_id() > top
+        assert common.load_roster(p.root, "holdout") == []
+        assert p.verify() == []
+
+
 def test_crash_during_remove():
     """Files moved to trash, manifest still names the clip: rolled back."""
     with Project.open(TMP / "proj") as p:
@@ -234,7 +259,8 @@ def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     order = [test_add_commit, test_crash_before_records,
              test_failed_rename_rolls_back, test_crash_after_records,
-             test_map_prune, test_remove_undo_purge, test_crash_during_remove,
+             test_map_prune, test_remove_undo_purge,
+             test_remove_rosters_and_ids, test_crash_during_remove,
              test_duplicate_id_refused, test_lock, test_orphan_reported]
     assert set(order) == set(tests)
     for t in order:

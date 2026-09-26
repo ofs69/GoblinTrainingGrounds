@@ -909,6 +909,9 @@ def run(args, ap=None):
                       .std() > 1e-3]
     print(f"{len(clips)} clips, {len(items)} train windows, "
           f"{len(val_items)} val windows", flush=True)
+    if not items:
+        raise SystemExit(f"no training windows: no clip gives a {args.win}-"
+                         f"row window with supervised motion")
     lo = torch.cat([c.band_lo[sups_ext[ci]]
                     for ci, c in enumerate(clips)]).numpy()
     hi = torch.cat([c.band_hi[sups_ext[ci]]
@@ -980,10 +983,14 @@ def run(args, ap=None):
               "rev_cnt_w": args.rev_cnt_w,
               "env_flow": bool(args.env_flow),
               "env_flow_steps": ENV_FLOW_STEPS}
-    torch.save(graft(ck, *mods, env_flow_steps=ENV_FLOW_STEPS,
-                     bins=EXT_BINS, recipe=recipe,
-                     plat_mlp=True, plat_mlp_ch=PLAT_MLP_CH),
-               out / "model.pt.tmp")
+    ck_out = graft(ck, *mods, env_flow_steps=ENV_FLOW_STEPS,
+                   bins=EXT_BINS, recipe=recipe,
+                   plat_mlp=True, plat_mlp_ch=PLAT_MLP_CH)
+    # the trunk's training clips and the heads' own, by script content
+    ck_out["trained_sigs"] = sorted(
+        set(ck.get("trained_sigs", ()))
+        | set(common.clip_sigs(args.dataset, args.ids).values()))
+    torch.save(ck_out, out / "model.pt.tmp")
     (out / "model.pt.tmp").replace(out / "model.pt")   # whole or absent
     print(f"wrote {out / 'model.pt'} (frozen trunk + refit heads)",
           flush=True)

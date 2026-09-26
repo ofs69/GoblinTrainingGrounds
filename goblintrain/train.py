@@ -26,8 +26,6 @@ import torch
 from . import common
 from .project import ProjectError, Tee, atomic_write_text
 
-RECIPES_DIR = common.WEIGHTS_DIR.parent / "recipes"
-DEFAULT_RECIPE = "v0.6.0"
 
 
 def load_recipe(path):
@@ -86,6 +84,27 @@ def resolve_from(spec):
     return trunk, spec
 
 
+def check_lengths(project, ids, win_s, roster, log):
+    """Refuse a roster whose clips are all shorter than the training window
+    (nothing would train); name the ones that are, when only some are."""
+    from .importer import hms
+    dur = {r["id"]: r.get("duration_ms") or 0 for r in project.manifest()}
+    if not ids:
+        raise ProjectError(f"roster {roster!r} is empty; goblintrain "
+                           f"prepare admits clips into it")
+    short = [i for i in ids if dur.get(i, 0) < 1000.0 * win_s]
+    need = hms(1000.0 * win_s)
+    if len(short) == len(ids):
+        raise ProjectError(
+            f"every clip of roster {roster!r} is shorter than the recipe's "
+            f"training window ({need}), so nothing would train. Import "
+            f"clips of at least {need}")
+    if short:
+        log(f"{len(short)} of {len(ids)} clips are shorter than the "
+            f"training window ({need}) and do not train: "
+            f"{' '.join(short[:10])}{' ...' if len(short) > 10 else ''}")
+
+
 def run(project, recipe=None, from_=None, init_from=None, roster="train",
         name=None, sets=(), log=print):
     """The ``train`` command. Returns the exit code."""
@@ -105,16 +124,19 @@ def run(project, recipe=None, from_=None, init_from=None, roster="train",
     if init_from is not None:
         init_ckpt, init_name = resolve_from(init_from)
     if recipe is None:
-        recipe = RECIPES_DIR / f"{from_name or init_name}.json"
+        recipe = common.RECIPES_DIR / f"{from_name or init_name}.json"
         if not recipe.is_file():
-            recipe = RECIPES_DIR / f"{DEFAULT_RECIPE}.json"
+            recipe = common.RECIPES_DIR / f"{common.DEFAULT_RECIPE}.json"
     rec = load_recipe(recipe)
     apply_sets(rec, sets)
     if init_ckpt is not None:
         rec["trunk"]["init_from"] = str(init_ckpt)
-    if common.load_roster(project.root, roster) is None:
+    ids = common.load_roster(project.root, roster)
+    if ids is None:
         raise ProjectError(f"no roster {roster!r} in the project; "
                            f"goblintrain prepare writes the train roster")
+    check_lengths(project, ids, common.recipe_window_s(
+        rec, trunk=trunk_ckpt is None), roster, log)
     effective = {"name": rec["name"], "description": rec.get("description", ""),
                  "from": None if trunk_ckpt is None else trunk_ckpt.name,
                  "roster": roster,

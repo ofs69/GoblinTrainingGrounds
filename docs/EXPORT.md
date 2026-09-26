@@ -88,7 +88,9 @@ goblinscript --bundle projects/mine/bundle --model mine video.mp4
   same as a build from source.
 - `--models mine,v0.6.0` writes the drafts of two packs side by side. The
   review page can switch the model of a script, or show the line of
-  another pack below it.
+  another pack below it. `--bundle` replaces the built-in bundle. Thus
+  the directory must hold both packs. Export v0.6.0 into it too
+  (`export <project> --run v0.6.0`).
 - The latent cache key depends only on the perception. Thus a pack switch
   runs only the heads again, not the encode.
 

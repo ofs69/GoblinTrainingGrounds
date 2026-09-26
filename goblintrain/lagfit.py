@@ -226,7 +226,7 @@ def ensure(project, clip_id, model, ck, ckpt_name, device, log=print,
                     row_hz=ck.get("row_hz"))
     fit = fit_clip(model, clip, device, cfg)
     applied, gated = gate(fit, cfg)
-    trained = set((ck.get("corrs0") or {}).keys())
+    trained = common.trained_ids(ck, project.root, [clip_id])
     side = {"id": clip_id, **fit, "applied_ms": round(float(applied), 1),
             "gated": bool(gated), "invert": False,
             "gate": {k: cfg[k] for k in ("min_peak", "min_dcorr", "min_abs_ms",

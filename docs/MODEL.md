@@ -98,7 +98,7 @@ Thus the Rust decoder and the Python decoder are one decode
 
 ## Released models
 
-`goblintrain.py fetch` downloads two checkpoints:
+`goblintrain.py fetch` downloads two checkpoints and their bare trunks:
 
 - **v0.5.1**: trained with a negative pool (a retired mechanism).
 - **v0.6.0**: the same recipe without negatives. It ranks equal or better.

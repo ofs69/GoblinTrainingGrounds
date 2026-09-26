@@ -231,6 +231,8 @@ def remove_clip(project, clip_id):
     record = next(r for r in project.manifest() if r["id"] == clip_id)
     map_line = next((ln for ln in project.map_lines()
                      if ln.partition("\t")[0] == clip_id), None)
+    if not record.get("negative"):
+        project.retire_id(clip_id)
     with Transaction(project, "remove", [clip_id]) as tx:
         files = project.clip_files(clip_id)
         moves = [(f, tx.trash_path(_rel(project, f))) for f in files]

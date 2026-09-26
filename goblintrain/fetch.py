@@ -5,12 +5,14 @@ it in git (``<name>.json``: size, SHA-256, download URL, recipe). The
 checkpoints themselves are release assets. ``fetch`` downloads whatever is
 missing or fails its hash and refuses a file that does not match. The PCA
 basis is committed and is only checked. The V-JEPA encoder comes from
-torch.hub on first use; ``--encoder`` fetches it now.
+torch.hub, which keeps it in its own cache and downloads it only when the
+cache lacks it.
 """
 import argparse
 import hashlib
 import json
 import os
+import urllib.error
 import urllib.request
 
 from . import common
@@ -19,6 +21,8 @@ from .project import PERCEPTION, ProjectError, basis_id_of
 CHECKPOINTS = common.WEIGHTS_DIR / "checkpoints"
 RELEASE_URL = ("https://github.com/ofs69/GoblinTrainingGrounds/releases/"
                "download/{tag}/{name}")
+TIMEOUT_S = 60           # per read; a stalled connection raises an error
+NET_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError)
 
 
 def sha256(path):
@@ -47,12 +51,21 @@ def status(side):
 def download(url, target, expect_sha, expect_bytes, log=print):
     tmp = target.with_name(target.name + ".part")
     log(f"  downloading {target.name} ({expect_bytes / 1e6:.1f} MB)")
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
+    try:
+        with (urllib.request.urlopen(url, timeout=TIMEOUT_S) as r,
+              open(tmp, "wb") as f):
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+    except BaseException as e:
+        tmp.unlink(missing_ok=True)
+        if isinstance(e, NET_ERRORS):
+            raise ProjectError(f"{target.name}: download failed ({e}) from "
+                               f"{url}; check the connection and run fetch "
+                               f"again")
+        raise
     if os.path.getsize(tmp) != expect_bytes or sha256(tmp) != expect_sha:
         tmp.unlink()
         raise ProjectError(f"{target.name}: the download does not match its "
@@ -60,7 +73,7 @@ def download(url, target, expect_sha, expect_bytes, log=print):
     os.replace(tmp, target)
 
 
-def run(names=None, encoder=False, log=print):
+def run(names=None, log=print):
     """The ``fetch`` command. Returns the exit code."""
     if basis_id_of(common.BASIS_PATH) != PERCEPTION["basis_id"]:
         raise ProjectError(f"{common.BASIS_PATH} is not the frozen basis "
@@ -80,11 +93,14 @@ def run(names=None, encoder=False, log=print):
         log(f"{target.name}: {state}")
         download(meta["url"], target, meta["sha256"], meta["bytes"], log)
         log(f"{target.name}: fetched and verified")
-    if encoder:
-        from . import extract
-        log("fetching the V-JEPA encoder through torch.hub")
+    from . import extract
+    log("V-JEPA encoder: loading through torch.hub (downloads it if missing)")
+    try:
         extract.load_encoder(PERCEPTION, "cpu")
-        log("encoder: ok")
+    except NET_ERRORS as e:
+        raise ProjectError(f"V-JEPA encoder: download failed ({e}); check "
+                           f"the connection and run fetch again")
+    log("encoder: ok")
     return 0
 
 

@@ -1,11 +1,12 @@
 """Draft: one video in, one funscript out.
 
 The video is imported without a script into a drafting project (by
-default ``projects/drafts`` in the repository, created on first use), the
-perception caches are filled for it, the model drafts it, and the written
+default ``drafts``, created on first use), the perception caches are
+filled for it, the model drafts it, and the written
 funscript is copied beside the video as ``<stem>.funscript``. A second
 draft of the same file finds the clip again by its content and only
-re-runs what is missing; a different model drafts into its own directory.
+re-runs what is missing; a different model drafts into its own directory,
+and a directory whose checkpoint has changed is drafted again.
 """
 import os
 import shutil
@@ -16,21 +17,20 @@ from pathlib import Path
 import torch
 
 from . import common, importer, prepare
-from .evaluate import resolve_model
-from .project import Project, ProjectError, Tee
+from .evaluate import STAMP, bind_drafts, resolve_model
+from .project import Project, ProjectError, Tee, named
 
-DEFAULT_PROJECT = common.WEIGHTS_DIR.parent / "projects" / "drafts"
 DEFAULT_MODEL = "v0.6.0"
 
 
-def run(videos, model=None, project_dir=None, out=None, force=False,
+def run(videos, model=None, project="drafts", out=None, force=False,
         log=print):
     """The ``draft`` command. Returns the exit code."""
     missing = importer.media.have_tools()
     if missing:
         raise ProjectError(f"{' and '.join(missing)} not found on PATH; see "
                            "README.md, What you need")
-    root = Path(project_dir or DEFAULT_PROJECT)
+    root = named(project)
     if not (root / "config.json").is_file():
         Project.create(root)
         log(f"created the drafting project {root}")
@@ -41,8 +41,10 @@ def run(videos, model=None, project_dir=None, out=None, force=False,
             clip_id, new = importer.import_video(project, v, log)
             clips.append((Path(v), clip_id))
         ids = [c for _, c in clips]
-        prepare.caches(project, ids, log, lag=False)
+        prepare.caches(project, ids, log)
         out_dir = project.root / "drafts" / label
+        sha = common.ckpt_sha(ckpt)
+        bind_drafts(out_dir, sha, log)
         need = [c for c in ids
                 if not (out_dir / f"{c}_jepa.funscript").is_file()]
         if need:
@@ -55,6 +57,7 @@ def run(videos, model=None, project_dir=None, out=None, force=False,
             args.val_frac = 1.0
             args.device = "cuda" if torch.cuda.is_available() else "cpu"
             out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / STAMP).write_text(sha, encoding="utf-8")
             log(f"drafting {len(need)} clip{'s' if len(need) != 1 else ''} "
                 f"with {ckpt.name}")
             tee = Tee(out_dir / "infer.log")

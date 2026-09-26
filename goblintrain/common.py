@@ -513,6 +513,26 @@ LAG_DIR = "lag"
 MASKS_DIR = "masks"
 H0_DIR = "h0"
 
+# The recipes the releases trained with; ``train`` uses the default one
+# when neither --from nor --init-from names a release.
+RECIPES_DIR = WEIGHTS_DIR.parent / "recipes"
+DEFAULT_RECIPE = "v0.6.0"
+
+
+def recipe_window_s(recipe, trunk=True):
+    """The longest training window that ``recipe`` runs, in seconds. A clip
+    shorter than it gives that stage no training window. ``trunk`` False:
+    the heads stage alone (``train --from``)."""
+    t = int(recipe["trunk"].get("win", 1536))     # jepa_train's default
+    h = int(recipe["heads"].get("win") or t)      # jepa_refit: the trunk's
+    return max(t if trunk else 0, h) / ROW_HZ
+
+
+def default_recipe_window_s():
+    """``recipe_window_s`` of the default recipe."""
+    p = RECIPES_DIR / f"{DEFAULT_RECIPE}.json"
+    return recipe_window_s(json.loads(p.read_text("utf-8")))
+
 
 def level_pool_rows(times_ms):
     """Odd row width of the ~2 s level low-pass on THIS cache's row grid.
@@ -667,12 +687,19 @@ def load_roster(project, name):
     """The clip IDs of a project's roster file, or None when there is none.
     A roster is ``rosters/<name>.json`` holding ``{"ids": [...]}``; it is
     WHAT a number is pooled over, so it lives in one file and every tool
-    resolves it by name."""
+    resolves it by name. An ID that is not in the manifest (a removed clip)
+    is skipped. The file keeps it, so ``remove --undo`` puts it back
+    (IDs are never reissued)."""
     p = roster_path(project, name)
     if not p.is_file():
         return None
-    ids = json.loads(p.read_text("utf-8"))["ids"]
-    return [str(i) for i in ids]
+    ids = [str(i) for i in json.loads(p.read_text("utf-8"))["ids"]]
+    m = Path(project) / "manifest.jsonl"
+    if m.is_file():
+        have = {json.loads(ln)["id"] for ln in
+                m.read_text("utf-8").splitlines() if ln.strip()}
+        ids = [i for i in ids if i in have]
+    return ids
 
 
 def resolve_ids(ids, project):
@@ -691,6 +718,49 @@ def resolve_ids(ids, project):
             if v not in out:
                 out.append(v)
     return out
+
+
+def clip_sigs(project, ids):
+    """The script signature of each clip of ``ids``, from the project's
+    manifest: the content identity a checkpoint records for the clips it
+    trained on (``trained_sigs``)."""
+    want, out = set(ids), {}
+    p = Path(project) / "manifest.jsonl"
+    if p.is_file():
+        for line in p.read_text("utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                if r.get("id") in want and r.get("sig"):
+                    out[r["id"]] = r["sig"]
+    return out
+
+
+def trained_ids(ck, project, ids):
+    """The clips of ``ids`` that the checkpoint trained on. A checkpoint
+    records its training clips by script content (``trained_sigs``), so
+    the match holds across projects, renames and clip IDs. A checkpoint
+    without that record (the shipped releases, older runs) matches its
+    ``corrs0`` IDs only when it trained on this project directory:
+    IDs are per project, and the releases' IDs name clips of a corpus no
+    project here has."""
+    if "trained_sigs" in ck:
+        sigs = set(ck["trained_sigs"])
+        return {i for i, s in clip_sigs(project, ids).items() if s in sigs}
+    ds = ck.get("dataset")
+    if ds and Path(ds).resolve() == Path(project).resolve():
+        return set(ids) & set(ck.get("corrs0") or {})
+    return set()
+
+
+def ckpt_sha(path):
+    """The first 16 hex digits of a checkpoint's SHA-256. A drafts
+    directory records it, because a run name or a file name can refer to
+    another model later."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()[:16]
 
 
 def rows_at(seconds, row_hz, odd=False):

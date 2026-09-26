@@ -171,16 +171,22 @@ def latent_parity(args, sess, man):
         got_i8 = np.clip(np.round(got / INT8_SCALE), -127, 127).astype(np.int32)
         ref = ref_i8 * scale
 
-        worst_abs = max(worst_abs, float(np.abs(got - ref).max()))
-        worst_corr = min(worst_corr, corr(got, ref))
+        # NaN (non-finite output, or a constant one) must stick: max() and
+        # min() would drop it and pass the gate
+        d_abs, c = float(np.abs(got - ref).max()), corr(got, ref)
+        worst_abs = d_abs if np.isnan(d_abs) else max(worst_abs, d_abs)
+        worst_corr = c if np.isnan(c) else min(worst_corr, c)
         d = np.abs(got_i8 - ref_i8)
         n_rows += group
         n_diff += int((d > 0).sum())
         n_off1 += int((d > 1).sum())
         print(f"  group {g}: rows {base}-{base+group-1}  "
-              f"max|d| {np.abs(got - ref).max():.4f}  corr {corr(got, ref):.6f}  "
+              f"max|d| {d_abs:.4f}  corr {c:.6f}  "
               f"int8 exact {(d == 0).mean():.1%}", flush=True)
 
+    if not n_rows:
+        raise SystemExit(f"{args.id} is too short for latent parity: it needs "
+                         f"{need} frames, {len(frames)} decoded")
     tot = n_rows * man["dim"] * grid * grid
     print(f"\nLATENTS ({n_rows} rows, {time.time()-t0:.0f}s)", flush=True)
     print(f"  max|d| {worst_abs:.4f}   (int8 step {INT8_SCALE:.4f} -- a "
@@ -223,6 +229,7 @@ def track_parity(args, man, bundle):
     if man["heads"].get("rev"):
         keys += ["rev_top", "rev_bot"]
     got = {k: np.full(T, np.nan) for k in keys}
+    ran = np.zeros(T, bool)                 # rows the graphs wrote
     t0 = time.time()
     for s in range(0, T, chunk):
         e = min(s + chunk, T)
@@ -232,6 +239,7 @@ def track_parity(args, man, bundle):
         if e - fs < man["min_chunk"]:
             continue
         off = s - fs
+        ran[s:e] = True
         oe = off + (e - s)
         x = np.ascontiguousarray(ds.feats[fs:fe].numpy())[None]    # int8
         cut = ds.cut[fs:fe].numpy()[None].astype(np.float32)
@@ -270,7 +278,12 @@ def track_parity(args, man, bundle):
     for k in keys:
         r = np.asarray(ref[k][:T], np.float64)
         g = got[k]
-        m = np.isfinite(r) & np.isfinite(g)
+        # a row the graphs wrote as NaN or inf stays in, and fails below
+        m = np.isfinite(r) & ran
+        if not m.any():
+            print(f"  {k:<6} no row to compare [FAIL]")
+            ok = False
+            continue
         ad = np.abs(g[m] - r[m])
         d = float(ad.max())
         row = int(np.flatnonzero(m)[int(ad.argmax())])

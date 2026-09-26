@@ -13,15 +13,16 @@ import os
 import sys
 from pathlib import Path
 
-from . import funscript, media, tx
+from . import common, funscript, media, tx
 from .project import ProjectError, atomic_write_text
 
 VIDEO_EXTS = [".mp4", ".mkv", ".avi", ".wmv", ".mov", ".m4v", ".webm",
               ".mpg", ".mpeg", ".ts", ".flv", ".m2ts"]
 SCRIPT_EXT = ".funscript"
 
-# A script whose last action lies further than this past the video's end was
-# authored for another cut of the video. Nearer trailing actions are trimmed.
+# Actions past the video's end are trimmed. A script whose last action lies
+# further than this past the end gets a warning, because it may be for
+# another cut of the video.
 OVERRUN_MS = 1000.0
 
 
@@ -31,6 +32,7 @@ class Pair:
         self.script = Path(script)
         # filled by preflight
         self.refusal = None       # a reason, or None when importable
+        self.warning = None       # imported, with a warning in the listing
         self.raw = None
         self.key = None
         self.sig = None
@@ -73,7 +75,15 @@ def find_pairs(paths):
                 missing.append(p)
         else:
             missing.append(p)
-    return pairs, n_video, n_script, missing
+    # a pair named twice (both of its files, or a file and its folder, as
+    # a shell glob gives them) is one pair, not a duplicate to refuse
+    seen, unique = set(), []
+    for pr in pairs:
+        key = (pr.video.resolve(), pr.script.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique.append(pr)
+    return unique, n_video, n_script, missing
 
 
 def _kind(p):
@@ -157,9 +167,9 @@ def preflight(project, pairs):
         unbounded = funscript.sanitize_aligned(acts)
         if unbounded and unbounded[-1][0] > pr.duration_ms + OVERRUN_MS:
             over = (unbounded[-1][0] - pr.duration_ms) / 1000
-            pr.refusal = (f"the script runs {over:.1f} s past the end of the "
-                          "video (authored for another cut?)")
-            continue
+            pr.warning = (f"the script runs {over:.1f} s past the end of the "
+                          "video and is cut there; it may be for another "
+                          "cut of the video")
         pr.clean = funscript.sanitize_aligned(acts, pr.duration_ms)
         if len(pr.clean) < 2:
             pr.refusal = "fewer than two usable actions"
@@ -317,13 +327,21 @@ def run(project, paths, yes=False, keep_going=False, log=print,
            if n_video else "")
         + (f", {n_script} script{'s' if n_script != 1 else ''} without a video"
            if n_script else ""))
+    win_ms = 1000.0 * common.default_recipe_window_s()
     for n, p in enumerate(pairs, 1):
         if p.refusal:
             log(f"  pair {n}: refused, {p.refusal}")
         else:
             log(f"  pair {n}: {hms(p.duration_ms)}, {len(p.clean)} actions"
                 + (f" ({p.n_raw - len(p.clean)} dropped by sanitization)"
-                   if p.n_raw != len(p.clean) else ""))
+                   if p.n_raw != len(p.clean) else "")
+                + (", too short to train" if p.duration_ms < win_ms else ""))
+            if p.warning:
+                log(f"  pair {n}: warning, {p.warning}")
+    if any(p.duration_ms < win_ms for p in ok):
+        log(f"a clip shorter than the training window of the "
+            f"{common.DEFAULT_RECIPE} recipe ({hms(win_ms)}) can be evaluated "
+            f"and drafted, but it does not train")
     if not ok:
         return 1
     if refused and not keep_going:

@@ -73,6 +73,44 @@ SPECS = {
 }
 DEFAULT = "vjepa2.1-vitb"   # the corpus encoder
 
+# The weight file of each hub entrypoint, at Meta's download host. The hub
+# repo's own base URL points at localhost (a debug setting left in
+# upstream), so its entrypoints cannot download. ``_hub_weights`` puts the
+# file into the torch.hub cache under the name the entrypoint asks for;
+# the entrypoint then loads it from the cache and does not download.
+#
+# ``HUB_REPO`` pins the hub code to one commit, so a later upstream change
+# cannot change the frozen perception. This commit is the one the shipped
+# caches were extracted with (the V-JEPA 2.1 release plus two README
+# images). torch.hub validates a ref only when it is a branch or tag head,
+# so the load skips that validation.
+HUB_REPO = "facebookresearch/vjepa2:204698b45b3712590f06245fbfba32d3be539812"
+HUB_URL = "https://dl.fbaipublicfiles.com/vjepa2"
+HUB_WEIGHTS = {
+    "vjepa2_1_vit_base_384": "vjepa2_1_vitb_dist_vitG_384",
+    "vjepa2_1_vit_large_384": "vjepa2_1_vitl_dist_vitG_384",
+}
+
+
+def _hub_weights(ident):
+    """Download the weights of hub entrypoint ``ident`` into the torch.hub
+    cache when the cache lacks them."""
+    import os
+    fname = HUB_WEIGHTS[ident] + ".pt"
+    target = os.path.join(torch.hub.get_dir(), "checkpoints", fname)
+    if not os.path.isfile(target):
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        torch.hub.download_url_to_file(f"{HUB_URL}/{fname}", target)
+
+
+def hub_encoder(ident):
+    """The encoder of hub entrypoint ``ident`` at the pinned commit, on the
+    CPU in fp32."""
+    _hub_weights(ident)
+    out = torch.hub.load(HUB_REPO, ident, trust_repo=True,
+                         skip_validation=True)
+    return out[0] if isinstance(out, (tuple, list)) else out  # (enc, pred)
+
 
 def scope(name):
     """Filesystem scope of an encoder's artifacts -- resolvable from the
@@ -147,10 +185,7 @@ class Encoder:
             self.model = AutoModel.from_pretrained(
                 self.ident, torch_dtype=torch.float16).eval().to(device)
         else:
-            out = torch.hub.load("facebookresearch/vjepa2", self.ident,
-                                 trust_repo=True)
-            if isinstance(out, (tuple, list)):   # (encoder, predictor)
-                out = out[0]
+            out = hub_encoder(self.ident)
             _patch_rope_dtype(out)
             self.model = out.to(device).half().eval()
             if self.layer is not None:

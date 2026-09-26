@@ -419,9 +419,13 @@ def strip_allowzero(path):
     produce. So the attribute is dead weight on every node that carries it, and
     dropping it is a rewrite of the graph's encoding, not of its computation.
     Any node whose target genuinely holds a zero is left alone and reported.
+
+    The same pass drops the exporter's provenance (:func:`drop_provenance`),
+    so every graph a bundle carries goes through it.
     """
     import onnx
     m = onnx.load(str(path))
+    dropped = drop_provenance(m)
     const = {i.name for i in m.graph.initializer}
     vals = {i.name: onnx.numpy_helper.to_array(i) for i in m.graph.initializer}
     stripped, kept = 0, 0
@@ -438,12 +442,51 @@ def strip_allowzero(path):
                 del n.attribute[i]
                 stripped += 1
             break
-    if stripped or kept:
+    if stripped or kept or dropped:
         onnx.save(m, str(path))
+    if stripped or kept:
         print(f"  {path.name}: dropped allowzero on {stripped} Reshape nodes"
               + (f" ({kept} kept -- real zero targets)" if kept else "")
               + "  [DirectML]", flush=True)
     _ = const
+
+
+def drop_provenance(m):
+    """Clear what the exporter records about where a graph came from: the
+    dynamo exporter stamps every node with its Python stack trace, which
+    holds absolute paths (the user's home and the repository's location)
+    into a file meant to be shared. Metadata and doc strings carry no
+    semantics; ORT reads neither. Returns the number of entries cleared."""
+    n = 0
+
+    def clear(obj):
+        nonlocal n
+        if len(obj.metadata_props):
+            n += len(obj.metadata_props)
+            del obj.metadata_props[:]
+        if getattr(obj, "doc_string", ""):
+            n += 1
+            obj.doc_string = ""
+
+    def walk(g):
+        clear(g)
+        for v in (*g.input, *g.output, *g.value_info, *g.initializer):
+            clear(v)
+        for node in g.node:
+            clear(node)
+            for a in node.attribute:
+                if a.HasField("g"):
+                    walk(a.g)
+                for sub in a.graphs:
+                    walk(sub)
+
+    clear(m)
+    walk(m.graph)
+    for f in m.functions:
+        clear(f)
+        for node in f.node:
+            clear(node)
+    return n
 
 
 def fuse_attention(path, packed=True):
@@ -643,14 +686,21 @@ def verify(path, feeds, refs, label, tol, corr_gate=None, eps=None):
     t0 = time.time()
     s = ort.InferenceSession(str(path), providers=eps or ["CPUExecutionProvider"])
     got = s.run(None, feeds)
-    worst, worst_corr = 0.0, 1.0
+    worst, worst_corr, finite = 0.0, 1.0, True
     for g, r in zip(got, refs):
         a = np.asarray(g, np.float64).ravel()
         b = r.detach().float().cpu().numpy().astype(np.float64).ravel()
+        # a NaN would drop out of max() and min() and pass the gate
+        finite &= bool(np.isfinite(a).all())
         worst = max(worst, float(np.abs(a - b).max()))
         if b.std() > 1e-9:
-            worst_corr = min(worst_corr, float(np.corrcoef(a, b)[0, 1]))
-    if corr_gate is not None:
+            c = float(np.corrcoef(a, b)[0, 1])   # NaN: a constant graph output
+            worst_corr = c if not np.isfinite(c) else min(worst_corr, c)
+    if not finite:
+        print(f"  verify {label:<22} the graph writes NaN or inf [FAIL]",
+              flush=True)
+        ok = False
+    elif corr_gate is not None:
         ok = worst_corr >= corr_gate
         print(f"  verify {label:<22} corr {worst_corr:.6f} "
               f"(gate {corr_gate}) max|d| {worst:.2e} "
@@ -865,8 +915,7 @@ BUNDLE_VERSION = 5     # bundle.rs BUNDLE_VERSION: one perception, named
 def load_perception(args, ident, tap, dev, edtype, res, grid):
     """The frozen encoder on the device and TransNetV2 on the CPU, ready to
     trace."""
-    hub = torch.hub.load("facebookresearch/vjepa2", ident, trust_repo=True)
-    enc = (hub[0] if isinstance(hub, (tuple, list)) else hub)
+    enc = encoders.hub_encoder(ident)
     if edtype is torch.float16:
         _patch_rope_for_onnx(enc)
     enc = enc.to(dev).to(edtype).eval()

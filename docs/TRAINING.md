@@ -2,13 +2,40 @@
 
 `train` has three paths:
 
-- fine-tune the heads on the released trunk (`--from`)
+- new heads on the released trunk (`--from`)
 - fine-tune the trunk from the released trunk (`--init-from`)
 - train a new trunk (`--recipe`).
 
 Start with the first path.
 
-## Fine-tune the heads
+## Corpus size
+
+On all three paths, the extrema heads start from a random init and learn
+from the training roster alone. The measure of size is hours of scripted
+footage: training draws its windows from the scripted rows, and unscripted
+gaps do not supervise. v0.6.0 trained on 367 clips: 117 hours of video,
+105 hours of it scripted. Much less footage gives a model that drafts
+worse than v0.6.0:
+
+- 21 minutes (3 clips, 11 training windows), `--from v0.6.0`: worse
+  than v0.6.0 on every metric, in-sample. Reversal recall at 67 ms went
+  from 0.558 to 0.316, and fast strokes per minute from 12.8 to 84.2.
+  The ext loss was still falling steeply at the last epoch.
+
+The break-even amount of footage is not measured. For a custom dataset,
+start with 5 to 10 hours of scripted footage. Compare each run with the
+release on the holdout before you use it:
+
+```
+python goblintrain.py eval <project> --run v0.6.0
+python goblintrain.py eval <project> --run mine --ref v0.6.0-holdout
+```
+
+The holdout is drawn at the first `prepare` of all clips and never
+changes. A project that had fewer than 8 clips at that time has an empty
+holdout and cannot make this comparison.
+
+## New heads on the released trunk
 
 ```
 python goblintrain.py train <project> --from v0.6.0 --name mine
@@ -19,7 +46,10 @@ that release, against your training roster. `fetch` downloads the trunk
 to `weights/checkpoints/<release>-trunk.pt`.
 
 - The trunk and its gate do not change.
-- Only the heads train: rails, envelope, dwell, reversal.
+- Only the heads train: rails, envelope, dwell, reversal. The envelope
+  embedding starts from the trunk's own modules. The rails, the envelope
+  flow, the dwell and the reversal heads start from a random init, not
+  from the heads of the release.
 - An epoch takes minutes, not hours.
 
 The released `v0.6.0.pt` was made from its trunk with this path. This
@@ -34,9 +64,9 @@ python goblintrain.py train <project> --init-from v0.6.0 --name mine-trunk --set
 
 `--init-from <release>` runs the trunk stage of the recipe from the trunk
 weights of that release, not from a random init. Then it refits the heads
-as usual. The trunk changes.
+as usual. The trunk changes. The rule in "Corpus size" applies as for
+`--from`.
 
-Use this path when your clips show content that the release did not see.
 Set:
 
 - a fraction of the recipe learning rate (the released trunk trained at
@@ -84,6 +114,7 @@ hold the settings that the released models used:
 
 ```json
 {
+ "name": "mine",
  "trunk": {"epochs": 30, "win": 6144, "stride": 3072, "batch": 1,
            "cap_two_view": true, "keep_pareto": true},
  "heads": {"epochs": 16, "win": 6144, "env_flow": true,
@@ -120,9 +151,9 @@ for the smoke test.
   refits on that trunk compute only the TCN and the heads. The store is
   derived and you can delete it. Each file stamps its inputs and rebuilds
   when they change.
-- **Supervision.** Only from the real funscript, corrected by the fitted
-  lag of the clip. Unscripted gaps and validation segments do not
-  supervise.
+- **Supervision.** Only from the real funscript. If the clip has a lag
+  fit (`prepare --lag-fit`), the script is shifted by the fitted lag.
+  Unscripted gaps and validation segments do not supervise.
 - **Determinism.** Data order, RNG draws and batch shapes are fixed. Thus
   a repeated run gives the same result. The one known exception is CUDA
   kernel non-determinism in the envelope flow head, at the 1e-3 scale.

@@ -69,6 +69,25 @@ class ProjectError(SystemExit):
         super().__init__(f"goblintrain: {msg}")
 
 
+# Every project of the command line is a directory in here, named by the
+# user. Git ignores this directory.
+PROJECTS_DIR = Path(__file__).resolve().parent.parent / "projects"
+
+
+def named(name):
+    """The directory of the project called ``name``. A name is one plain
+    directory name; a path is refused."""
+    if (name in ("", ".", "..") or any(c in name for c in "/\\:")
+            or Path(name).name != name):
+        base = Path(name.rstrip("/\\")).name
+        hint = (f"; did you mean: {base}"
+                if base not in ("", ".", "..") else "")
+        raise ProjectError(f"{name!r} is a path, not a project name. Give "
+                           f"the name alone: every project is a directory "
+                           f"in {PROJECTS_DIR}{hint}")
+    return PROJECTS_DIR / name
+
+
 class Tee:
     """stdout that also lands in a log file; ``sys.stdout = Tee(path)``
     for the length of a stage, then back."""
@@ -168,7 +187,8 @@ class Project:
         p = cls(root)
         if not p.config_path.is_file():
             raise ProjectError(f"{p.root} is not a project (no config.json); "
-                               "create one with: goblintrain init <dir>")
+                               f"create one with: goblintrain init "
+                               f"{p.root.name}")
         p.config = json.loads(p.config_path.read_text("utf-8"))
         if p.config.get("version") != CONFIG_VERSION:
             raise ProjectError(f"{p.root}: config version "
@@ -253,10 +273,19 @@ class Project:
     def ids(self):
         return [r["id"] for r in self.manifest()]
 
+    def retire_id(self, clip_id):
+        """Record that ``clip_id`` left the manifest so :meth:`next_id` never
+        issues it again: rosters, drafts and eval records still name it."""
+        if int(clip_id) > int(self.config.get("removed_top", 0)):
+            self.config["removed_top"] = int(clip_id)
+            atomic_write_text(self.config_path,
+                              json.dumps(self.config, indent=1) + "\n")
+
     def next_id(self, taken=()):
-        """The next free ID: one past the highest in the manifest and in
-        ``taken`` (IDs a transaction in flight has claimed)."""
-        top = 0
+        """The next free ID: one past the highest in the manifest, the
+        highest ever removed and ``taken`` (IDs a transaction in flight has
+        claimed)."""
+        top = int(self.config.get("removed_top", 0))
         for r in self.manifest():
             if not r.get("negative"):      # records of a retired ID band
                 top = max(top, int(r["id"]))

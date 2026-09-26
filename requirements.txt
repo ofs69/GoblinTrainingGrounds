@@ -18,11 +18,12 @@ matplotlib==3.11.0
 tqdm==4.68.4
 transnetv2-pytorch==1.0.5
 
-# ONNX export and the parity check. onnxruntime runs the CPU and CUDA
-# providers; on Windows, onnxruntime-directml adds the provider GoblinScript
-# ships with.
+# ONNX export and the parity check. Both onnxruntime packages install the
+# same `onnxruntime` module, so install exactly one: on Windows the DirectML
+# build (the provider GoblinScript ships with, plus CPU), elsewhere the CPU
+# build.
 onnx==1.22.0
 onnxscript==0.7.1
 onnxconverter-common==1.16.0
-onnxruntime==1.27.0
+onnxruntime==1.27.0; sys_platform != "win32"
 onnxruntime-directml==1.24.4; sys_platform == "win32"

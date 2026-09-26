@@ -14,7 +14,7 @@ project.
   meta/               per-clip probe records
   boundaries/         TransNetV2 shot boundaries per clip
   latents/            int8 latent caches per clip
-  lag/                script-to-video lag sidecars per clip
+  lag/                script-to-video lag sidecars (prepare --lag-fit)
   h0/                 frontend-output stores, keyed by trunk (derived)
   masks/              optional banner-mask rect sidecars, used when present
   rosters/            train.json, holdout.json (written by prepare)
@@ -32,9 +32,9 @@ or manifest field contains them. Tools print IDs.
 
 `manifest.jsonl` is the source of truth for the content of a project. Each
 line holds: id, duration, action count, content signature of the script,
-status. Each command first checks the manifest against the files it
-names. It reports a clip with files but no record, or a record with no
-files. It never adopts them automatically.
+status. `status` checks the manifest against the files it names. It
+reports a clip with files but no record, or a record with no files. It
+never adopts them automatically.
 
 ## Import
 
@@ -47,7 +47,16 @@ transaction, it:
 3. Sanitizes the funscript against the real video duration:
    - clamps positions to [0, 100]
    - drops negative and out-of-range timestamps
-   - keeps only strictly increasing times.
+   - keeps only strictly increasing times
+   - lowers strokes that are too fast. A device moves at most 600
+     position units per second, so a full 0-to-100 stroke needs at least
+     167 ms. For a faster stroke, the time of each action stays the same
+     and the end position moves toward the start position until the
+     stroke is at 600 units per second. Thus a fast stroke keeps its
+     timing and loses depth.
+
+   The project stores the sanitized script, not the original file. The
+   import listing counts dropped actions, but not lowered strokes.
 4. Computes the content signature of the script. Refuses a duplicate of a
    clip already in the project.
 5. Moves the files into place by rename. Writes the manifest and the
@@ -74,9 +83,9 @@ It rewrites the manifest. `remove --undo` restores the last removal.
 
 ## Caches
 
-`prepare` fills missing items one clip at a time: boundaries, latents, lag
-fit. Each cache is written to a temporary name. When complete, it is
-stamped and renamed. A stage that finds a temporary file treats it as
+`prepare` fills missing items one clip at a time: boundaries, latents,
+and the lag fit with `--lag-fit`. Each cache is written to a temporary
+name. When complete, it is stamped and renamed. A stage that finds a temporary file treats it as
 absent. Thus no reader sees a partial cache. Each latent cache stamps the
 perception used to extract it. A reader refuses a stamp mismatch.
 
@@ -114,25 +123,37 @@ contract.
 
 ## Lag fit and admission
 
-`prepare` cross-correlates the velocity that the released model predicts
-against each script. The result is the global time offset of the clip.
-The fit is out of sample, because the released model never saw your clip.
-The sidecar records the fit, its confidence, a polarity check and a drift
-check.
+By default, `prepare` takes each script as synchronized with its video.
+It does not fit a lag, and it **admits** every scripted clip that has
+latents to the training roster.
 
-`prepare` **admits** a scripted clip to the training roster when all of
-these are true:
+With `--lag-fit`, `prepare` also cross-correlates the velocity that the
+released model predicts against each scripted clip that has no fit yet.
+The result is the global time offset of the clip. The fit is out of
+sample, because the released model never saw your clip. The sidecar in
+`lag/` records the fit, its confidence, a polarity check and a drift
+check. Training and eval shift the script of a clip by its fitted offset.
+A clip without a sidecar is not shifted.
+
+A clip that has a lag fit is admitted only when all of these are true:
 
 - the fit peak is at least 0.55
 - polarity is not suspect
 - no drift alarm extends past one reversal tolerance (66.7 ms).
 
-`status <id>` shows each fact next to its threshold.
+`prepare` prints the reason for each clip that it does not admit. A fit
+stays with its clip. A later `prepare` without `--lag-fit` keeps the fit,
+and training and eval still apply it.
 
 - `rosters/holdout.json` is drawn one time from the admitted clips (one in
-  eight). It is never rewritten.
+  eight), at the first `prepare` of all clips. A `prepare` of some clip
+  IDs does not draw it. It is never rewritten. With fewer than 8
+  admitted clips at that time, it is empty and stays empty.
 - `rosters/train.json` holds the admitted clips that are not in the
   holdout. Each `prepare` rewrites it.
+- A roster file keeps the ID of a removed clip. A tool that reads the
+  roster skips an ID that is not in the manifest. Thus `remove --undo`
+  puts the clip back in its roster.
 
 Curation is per clip and done by a human. Use `status` to see why a clip
 is in or out. Use `remove` to take a clip out. No tool decides in bulk.

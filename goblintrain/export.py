@@ -24,7 +24,7 @@ def parity_clip(project, clip_id=None):
     if clip_id:
         if not extract.path(project, clip_id).is_file():
             raise ProjectError(f"{clip_id} has no latents; goblintrain "
-                               f"prepare {project.root} {clip_id}")
+                               f"prepare {project.root.name} {clip_id}")
         return clip_id
     ids = ((common.load_roster(project.root, "gate") or [])
            + (common.load_roster(project.root, "holdout") or []))
